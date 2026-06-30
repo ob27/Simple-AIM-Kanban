@@ -209,7 +209,7 @@ DPK 3001,Pre-FAB Asset Register Review,
 
 | Column | Required | Notes |
 |---|---|---|
-| `Title` (or `DPK Number`) | Yes | Displayed as the card title |
+| `Title` | Yes | Displayed as the card title |
 | `Status` | Yes | Matched case-insensitively to a column label; unrecognised rows are skipped |
 | `Pill` (or `Pill Value`) | No | Short tag displayed as a pill below the title (e.g. a date, priority, or reference) |
 
