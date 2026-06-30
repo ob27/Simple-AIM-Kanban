@@ -1,6 +1,6 @@
 # Simple Kanban by Oestler
 
-A multi-board Kanban platform with real-time sync, invite-based sharing, progress tracking, and per-card notes and comments. Deployed at [oestler.com/simple-kanban](https://oestler.com/simple-kanban).
+A multi-board Kanban platform with real-time sync, invite-based sharing, progress tracking, and per-card notes and comments. Live at [oestler.com/simple-kanban](https://oestler.com/simple-kanban).
 
 ---
 
