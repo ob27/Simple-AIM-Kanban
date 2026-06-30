@@ -6,9 +6,11 @@ interface Props {
   cards: KanbanCard[];
   columns: ColumnConfig[];
   totalEstimated: number;
+  doneColumnId?: string;
+  groomedColumnId?: string;
 }
 
-export function ProgressBar({ cards, columns, totalEstimated }: Props) {
+export function ProgressBar({ cards, columns, totalEstimated, doneColumnId, groomedColumnId }: Props) {
   const { isMobile } = useBreakpoint();
   const total = Math.max(totalEstimated, 1);
   const counts = Object.fromEntries(columns.map(c => [c.id, 0]));
@@ -18,11 +20,20 @@ export function ProgressBar({ cards, columns, totalEstimated }: Props) {
 
   const placed = cards.length;
   const remainingCount = Math.max(total - placed, 0);
-  const lastColId = columns[columns.length - 1]?.id;
-  const completions = counts[lastColId ?? ''] ?? 0;
+
+  // Use the designated done column, falling back to the last column
+  const doneColId = doneColumnId ?? columns[columns.length - 1]?.id;
+  const completions = counts[doneColId ?? ''] ?? 0;
+
+  // Groomed = cards in the groomed column or any column to its right
+  const groomedIdx = groomedColumnId ? columns.findIndex(c => c.id === groomedColumnId) : -1;
+  const groomedCount = groomedIdx >= 0
+    ? cards.filter(c => columns.findIndex(col => col.id === c.columnId) >= groomedIdx).length
+    : placed;
+
   const inProgress = placed - completions;
   const completionPct = Math.round((completions / total) * 100);
-  const groomedPct = Math.round((placed / total) * 100);
+  const groomedPct = Math.round((groomedCount / total) * 100);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

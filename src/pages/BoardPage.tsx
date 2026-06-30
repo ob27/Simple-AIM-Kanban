@@ -144,7 +144,13 @@ export function BoardPage() {
       )}
 
       {showProgressBar && (
-        <ProgressBar cards={kanban.cards} columns={kanban.columns} totalEstimated={effectiveTotal} />
+        <ProgressBar
+          cards={kanban.cards}
+          columns={kanban.columns}
+          totalEstimated={effectiveTotal}
+          doneColumnId={kanban.doneColumnId}
+          groomedColumnId={kanban.groomedColumnId}
+        />
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, height: 44, justifyContent: 'space-between' }}>
