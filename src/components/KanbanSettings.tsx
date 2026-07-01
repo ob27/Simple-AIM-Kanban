@@ -149,17 +149,19 @@ export function KanbanSettings({ open, kanban, onClose, onChange, onDelete }: Pr
                 <Input size="middle" />
               </Form.Item>
             </div>
-            <TextArea
-              value={columnDescriptions[i] ?? ''}
-              onChange={e => {
-                const next = [...columnDescriptions];
-                next[i] = e.target.value;
-                setColumnDescriptions(next);
-              }}
-              placeholder="Column description (optional) — shown as an ℹ️ button in the column header"
-              autoSize={{ minRows: 1, maxRows: 4 }}
-              style={{ marginTop: 6, marginLeft: 36, fontSize: 12, color: '#666' }}
-            />
+            <div style={{ marginLeft: 36, marginTop: 6 }}>
+              <TextArea
+                value={columnDescriptions[i] ?? ''}
+                onChange={e => {
+                  const next = [...columnDescriptions];
+                  next[i] = e.target.value;
+                  setColumnDescriptions(next);
+                }}
+                placeholder="Column description (optional)"
+                autoSize={{ minRows: 1, maxRows: 4 }}
+                style={{ fontSize: 12, color: '#555', width: '100%' }}
+              />
+            </div>
           </div>
         ))}
 
