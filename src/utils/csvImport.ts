@@ -1,6 +1,29 @@
 import Papa from 'papaparse';
 import type { KanbanCard, ColumnConfig } from '../types';
 
+function longestCommonPrefixLen(a: string, b: string): number {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i;
+}
+
+function matchColumn(statusRaw: string, columns: ColumnConfig[]): ColumnConfig | undefined {
+  const s = statusRaw.toLowerCase();
+  const exact = columns.find(c => c.label.toLowerCase() === s);
+  if (exact) return exact;
+  const contained = columns.find(c =>
+    c.label.toLowerCase().includes(s) || s.includes(c.label.toLowerCase())
+  );
+  if (contained) return contained;
+  let best: ColumnConfig | undefined;
+  let bestLen = 0;
+  for (const c of columns) {
+    const overlap = longestCommonPrefixLen(s, c.label.toLowerCase());
+    if (overlap > bestLen) { bestLen = overlap; best = c; }
+  }
+  return bestLen >= 3 ? best : undefined;
+}
+
 export interface ImportResult {
   cards: KanbanCard[];
   skippedRows: number;
@@ -25,11 +48,7 @@ export function parseCSV(file: File, columns: ColumnConfig[]): Promise<ImportRes
 
             if (!title || !statusRaw) { skippedRows++; continue; }
 
-            // Match status to column label (case-insensitive, partial match)
-            const col = columns.find(c =>
-              c.label.toLowerCase().includes(statusRaw.toLowerCase()) ||
-              statusRaw.toLowerCase().includes(c.label.toLowerCase().split(' ')[0])
-            );
+            const col = matchColumn(statusRaw, columns);
             if (!col) { skippedRows++; continue; }
 
             cards.push({

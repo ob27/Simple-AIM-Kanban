@@ -23,6 +23,18 @@ export interface KanbanCard {
   comments?: CardComment[];
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+  ownerId: string;
+  ownerEmail?: string;
+  memberIds: string[];
+  memberEmails: Record<string, string>;
+  kanbanIds: string[];
+  inviteToken: string;
+  createdAt: number;
+}
+
 export interface Kanban {
   id: string;
   name: string;
@@ -37,6 +49,9 @@ export interface Kanban {
   doneColumnId?: string;
   showProgressBar?: boolean;
   showLifeline?: boolean;
+  showLogo?: boolean;
+  showKanbanLogo?: boolean;
+  kanbanLogoUrl?: string;
   cardFontSize?: number;
   ownerEmail?: string;
   coOwnerIds?: string[];

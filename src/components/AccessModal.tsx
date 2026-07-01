@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Modal, Tag, Button, Select, Popconfirm, message } from 'antd';
+import { Modal, Tag, Button, Select, Popconfirm, message, Tooltip } from 'antd';
 import { CrownOutlined } from '@ant-design/icons';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -169,7 +169,7 @@ export function AccessModal({ kanban, currentUid, currentEmail, onClose, onChang
                 <div style={{ fontSize: 13, fontWeight: 600, color: entry.email ? '#1a1a2e' : '#aaa', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {entry.email
                     ? <>{entry.email}{isSelf ? ' (you)' : ''}</>
-                    : <span title={entry.uid}>Unknown user <span style={{ fontSize: 11, fontWeight: 400 }}>({entry.uid.slice(0, 8)}…)</span></span>
+                    : <Tooltip title={entry.uid}><span>Unknown user <span style={{ fontSize: 11, fontWeight: 400 }}>({entry.uid.slice(0, 8)}…)</span></span></Tooltip>
                   }
                 </div>
                 <div style={{ fontSize: 11, color: '#aaa', marginTop: 1 }}>

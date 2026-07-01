@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && cd /Users/tom/oestler && firebase deploy --only hosting"
   },
   "dependencies": {
     "@ant-design/icons": "^5.3.7",

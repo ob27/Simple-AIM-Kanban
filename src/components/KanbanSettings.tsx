@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Drawer, Button, Input, Form, InputNumber, Popconfirm, message, Select, Tooltip, Switch } from 'antd';
 const { TextArea } = Input;
-import { CopyOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CopyOutlined, ReloadOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined } from '@ant-design/icons';
 import type { Kanban } from '../types';
 import { regenerateInvite } from '../store';
 import { useBreakpoint } from '../hooks/useBreakpoint';
+import { uploadKanbanLogo, deleteKanbanLogo } from '../utils/logoUpload';
 
 const MONTH_OPTIONS = [
   'January','February','March','April','May','June',
@@ -22,19 +23,24 @@ interface Props {
   onClose: () => void;
   onChange: (kanban: Kanban) => void;
   onDelete: () => void;
+  onExportCSV: () => void;
 }
 
-export function KanbanSettings({ open, kanban, onClose, onChange, onDelete }: Props) {
+export function KanbanSettings({ open, kanban, onClose, onChange, onDelete, onExportCSV }: Props) {
   const [form] = Form.useForm();
   const [regenerating, setRegenerating] = useState(false);
   const [columnColors, setColumnColors] = useState<string[]>([]);
   const [columnDescriptions, setColumnDescriptions] = useState<string[]>([]);
+  const [kanbanLogoUrl, setKanbanLogoUrl] = useState<string | undefined>(undefined);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoFileRef = useRef<HTMLInputElement>(null);
   const { isMobile } = useBreakpoint();
 
   useEffect(() => {
     if (open) {
       setColumnColors(kanban.columns.map(c => c.color));
       setColumnDescriptions(kanban.columns.map(c => c.description ?? ''));
+      setKanbanLogoUrl(kanban.kanbanLogoUrl);
       form.setFieldsValue({
         name: kanban.name,
         totalEstimated: kanban.totalEstimated,
@@ -47,6 +53,8 @@ export function KanbanSettings({ open, kanban, onClose, onChange, onDelete }: Pr
         doneColumnId: kanban.doneColumnId ?? kanban.columns[5]?.id,
         showProgressBar: kanban.showProgressBar ?? true,
         showLifeline: kanban.showLifeline ?? true,
+        showLogo: kanban.showLogo ?? false,
+        showKanbanLogo: kanban.showKanbanLogo ?? false,
         cardFontSize: kanban.cardFontSize ?? 15,
         ...Object.fromEntries(kanban.columns.map((c, i) => [`col_${i}`, c.label])),
       });
@@ -74,6 +82,9 @@ export function KanbanSettings({ open, kanban, onClose, onChange, onDelete }: Pr
       doneColumnId: vals.doneColumnId as string,
       showProgressBar: vals.showProgressBar as boolean,
       showLifeline: vals.showLifeline as boolean,
+      showLogo: vals.showLogo as boolean,
+      showKanbanLogo: vals.showKanbanLogo as boolean,
+      kanbanLogoUrl,
       cardFontSize: vals.cardFontSize as number,
       columns: updatedColumns,
     });
@@ -189,6 +200,86 @@ export function KanbanSettings({ open, kanban, onClose, onChange, onDelete }: Pr
             </Form.Item>
             <span style={{ fontSize: 13, color: '#555' }}>Show project lifeline</span>
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Form.Item name="showLogo" valuePropName="checked" noStyle>
+              <Switch
+                size="small"
+                onChange={v => { if (v) form.setFieldValue('showKanbanLogo', false); }}
+              />
+            </Form.Item>
+            <span style={{ fontSize: 13, color: '#555' }}>Show workspace logo</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Form.Item name="showKanbanLogo" valuePropName="checked" noStyle>
+              <Switch
+                size="small"
+                onChange={v => { if (v) form.setFieldValue('showLogo', false); }}
+              />
+            </Form.Item>
+            <span style={{ fontSize: 13, color: '#555' }}>Show kanban logo</span>
+          </div>
+        </div>
+
+        {/* Kanban logo upload */}
+        <div style={{ marginTop: 10, marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
+            Upload a logo specific to this kanban. Appears above the progress bar when &quot;Show kanban logo&quot; is on.
+          </div>
+          {kanbanLogoUrl && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, padding: '8px 10px', background: '#EEF0F5', borderRadius: 8 }}>
+              <img src={kanbanLogoUrl} alt="kanban logo" style={{ height: 32, width: 'auto', objectFit: 'contain' }} />
+              <Button
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+                loading={uploadingLogo}
+                onClick={async () => {
+                  setUploadingLogo(true);
+                  try {
+                    await deleteKanbanLogo(kanban.id);
+                    setKanbanLogoUrl(undefined);
+                    form.setFieldValue('showKanbanLogo', false);
+                    message.success('Kanban logo removed');
+                  } catch {
+                    message.error('Failed to remove logo');
+                  } finally {
+                    setUploadingLogo(false);
+                  }
+                }}
+              >Remove</Button>
+            </div>
+          )}
+          <input
+            ref={logoFileRef}
+            type="file"
+            accept=".png,.jpg,.jpeg,.svg,.webp"
+            style={{ display: 'none' }}
+            onChange={async e => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              setUploadingLogo(true);
+              try {
+                const url = await uploadKanbanLogo(kanban.id, file);
+                setKanbanLogoUrl(url);
+                form.setFieldValue('showKanbanLogo', true);
+                form.setFieldValue('showLogo', false);
+                message.success('Logo uploaded');
+              } catch {
+                message.error('Upload failed — check Firebase Storage rules');
+              } finally {
+                setUploadingLogo(false);
+                e.target.value = '';
+              }
+            }}
+          />
+          <Button
+            icon={<UploadOutlined />}
+            size="small"
+            loading={uploadingLogo}
+            onClick={() => logoFileRef.current?.click()}
+          >
+            {kanbanLogoUrl ? 'Replace logo' : 'Upload logo'}
+          </Button>
         </div>
 
         {/* Card font size */}
@@ -242,8 +333,16 @@ export function KanbanSettings({ open, kanban, onClose, onChange, onDelete }: Pr
           </Tooltip>
         </div>
 
-        {/* Danger zone */}
+        {/* Export */}
         <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px solid #f0f0f0' }}>
+          <div style={{ fontWeight: 600, fontSize: 13, color: '#555', marginBottom: 8 }}>Export</div>
+          <Button icon={<DownloadOutlined />} block onClick={onExportCSV}>
+            Export as CSV
+          </Button>
+        </div>
+
+        {/* Danger zone */}
+        <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid #f0f0f0' }}>
           <div style={{ fontWeight: 600, fontSize: 13, color: '#ff4d4f', marginBottom: 8 }}>Danger zone</div>
           <Popconfirm
             title="Delete this kanban?"

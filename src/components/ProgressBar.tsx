@@ -1,3 +1,4 @@
+import { Tooltip } from 'antd';
 import type { KanbanCard, ColumnConfig } from '../types';
 import { REMAINING_COLOR } from '../constants';
 import { useBreakpoint } from '../hooks/useBreakpoint';
@@ -43,9 +44,8 @@ export function ProgressBar({ cards, columns, totalEstimated, doneColumnId, groo
           if (!count) return null;
           const pct = (count / total) * 100;
           return (
+            <Tooltip key={col.id} title={`${col.label}: ${count} card${count !== 1 ? 's' : ''} (${pct.toFixed(1)}%)`}>
             <div
-              key={col.id}
-              title={`${col.label}: ${count} cards (${pct.toFixed(1)}%)`}
               style={{
                 flex: `0 0 ${pct}%`, background: col.color,
                 transition: 'flex 0.45s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -59,11 +59,12 @@ export function ProgressBar({ cards, columns, totalEstimated, doneColumnId, groo
                 </span>
               )}
             </div>
+            </Tooltip>
           );
         })}
         {remainingCount > 0 && (
+          <Tooltip title={`Not yet planned: ${remainingCount} card${remainingCount !== 1 ? 's' : ''}`}>
           <div
-            title={`Not yet planned: ${remainingCount} cards`}
             style={{ flex: 1, background: REMAINING_COLOR, transition: 'flex 0.45s cubic-bezier(0.4, 0, 0.2, 1)', display: 'flex', alignItems: 'center', paddingLeft: 12, overflow: 'hidden' }}
           >
             {(remainingCount / total) * 100 > 8 && (
@@ -72,6 +73,7 @@ export function ProgressBar({ cards, columns, totalEstimated, doneColumnId, groo
               </span>
             )}
           </div>
+          </Tooltip>
         )}
       </div>
 
@@ -80,13 +82,16 @@ export function ProgressBar({ cards, columns, totalEstimated, doneColumnId, groo
           const count = counts[col.id];
           if (!count) return null;
           const shortLabel = col.label.length > 16 ? col.label.slice(0, 15) + '…' : col.label;
+          const needsTooltip = col.label.length > 16;
           return (
-            <div key={col.id} title={col.label} style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, cursor: 'default' }}>
+            <Tooltip key={col.id} title={needsTooltip ? col.label : ''}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, cursor: 'default' }}>
               <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: col.color, flexShrink: 0 }} />
               <span style={{ fontSize: 'clamp(11px, 0.85vw, 13px)', color: '#555', whiteSpace: 'nowrap' }}>
                 {shortLabel}:&nbsp;<strong style={{ color: '#222' }}>{count}</strong>
               </span>
             </div>
+            </Tooltip>
           );
         })}
         {remainingCount > 0 && (

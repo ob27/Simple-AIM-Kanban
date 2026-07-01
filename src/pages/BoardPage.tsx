@@ -4,6 +4,8 @@ import { Button, Popover, Spin, Switch } from 'antd';
 import { EditOutlined, ArrowLeftOutlined, SettingOutlined } from '@ant-design/icons';
 import type { KanbanCard } from '../types';
 import { saveKanban, deleteKanban, isKanbanOwner } from '../store';
+import { exportKanbanCSV } from '../utils/csvExport';
+import { getWorkspaceSettings } from '../utils/logoUpload';
 import { useAuth } from '../AuthContext';
 import { ProgressBar } from '../components/ProgressBar';
 import { ProjectLifeline } from '../components/ProjectLifeline';
@@ -22,6 +24,7 @@ export function BoardPage() {
   const [editTotal, setEditTotal] = useState(false);
   const [editValue, setEditValue] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
   const isOwner = kanban && user ? isKanbanOwner(kanban, user.uid) : false;
   const isViewer = kanban && user ? (kanban.viewerIds ?? []).includes(user.uid) : false;
@@ -39,6 +42,7 @@ export function BoardPage() {
     if (kanban && !initialised.current) {
       setEditValue(kanban.totalEstimated);
       initialised.current = true;
+      getWorkspaceSettings(kanban.ownerId).then(s => setLogoUrl(s.boardLogoUrl));
     }
   }, [kanban]);
 
@@ -135,6 +139,17 @@ export function BoardPage() {
       gap: 8,
       background: '#EEF0F5',
     }}>
+      {(() => {
+        const src = (kanban.showKanbanLogo && kanban.kanbanLogoUrl)
+          ? kanban.kanbanLogoUrl
+          : (kanban.showLogo && logoUrl) ? logoUrl : null;
+        return src ? (
+          <div style={{ display: 'flex', alignItems: 'center', paddingBottom: 2 }}>
+            <img src={src} alt="logo" style={{ height: 52, width: 'auto', objectFit: 'contain' }} />
+          </div>
+        ) : null;
+      })()}
+
       {showLifeline && (
         <ProjectLifeline
           startYear={kanban.projectStartYear}
@@ -200,7 +215,7 @@ export function BoardPage() {
             onClick={() => setSettingsOpen(true)}
             style={{ color: '#666' }}
           >
-            Settings
+            {!isMobile && 'Settings'}
           </Button>
         )}
       </div>
@@ -230,6 +245,7 @@ export function BoardPage() {
           onClose={() => setSettingsOpen(false)}
           onChange={setKanban}
           onDelete={handleDeleteKanban}
+          onExportCSV={() => exportKanbanCSV(kanban)}
         />
       )}
     </div>

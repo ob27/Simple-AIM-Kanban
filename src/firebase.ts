@@ -2,26 +2,28 @@ import { initializeApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyDuY8LK07SY3RNzK0aESdm76Sn5IxM-pec',
-  authDomain: 'oestler.firebaseapp.com',
-  projectId: 'oestler',
-  storageBucket: 'oestler.firebasestorage.app',
-  messagingSenderId: '20203176300',
-  appId: '1:20203176300:web:04cb3e8ab566b66ddcf349',
-  measurementId: 'G-BWY8GTCBX9',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID as string,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID as string,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string,
 };
 
 export const app = initializeApp(firebaseConfig);
 export const analytics = getAnalytics(app);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const storage = getStorage(app);
 
 if (import.meta.env.PROD) {
   initializeAppCheck(app, {
-    provider: new ReCaptchaV3Provider('6LfV3bgsAAAAAASvjU1ei3YzvJc5XV9k1-n3hwIN'),
+    provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY as string),
     isTokenAutoRefreshEnabled: true,
   });
 }

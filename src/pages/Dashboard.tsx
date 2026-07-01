@@ -1,43 +1,72 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Spin, Tag, Tooltip } from 'antd';
-import { PlusOutlined, LogoutOutlined, TeamOutlined } from '@ant-design/icons';
+import {
+  Button, Spin, Tag, Tooltip, Drawer, message, Dropdown, Modal, Input,
+} from 'antd';
+import {
+  PlusOutlined, LogoutOutlined, TeamOutlined, SettingOutlined,
+  DownloadOutlined, FileTextOutlined, UploadOutlined, DeleteOutlined,
+  FolderOutlined, FolderOpenOutlined, RightOutlined, DownOutlined,
+  ShareAltOutlined, EditOutlined, MoreOutlined, FolderAddOutlined,
+} from '@ant-design/icons';
 import { useAuth } from '../AuthContext';
-import { subscribeUserKanbans, ensureDefaultKanban, isKanbanOwner } from '../store';
-import type { Kanban } from '../types';
+import {
+  subscribeUserKanbans, isKanbanOwner,
+  subscribeUserFolders, createFolder, deleteFolder, renameFolder,
+  addKanbanToFolder, removeKanbanFromFolder,
+} from '../store';
+import type { Kanban, Folder } from '../types';
 import { CreateKanbanModal } from '../components/CreateKanbanModal';
 import { AccessModal } from '../components/AccessModal';
 import { UserAvatar } from '../components/UserAvatar';
 import { useBreakpoint } from '../hooks/useBreakpoint';
+import { exportAllKanbansCSV } from '../utils/csvExportAll';
+import { getWorkspaceSettings, uploadLogo, deleteLogo, saveNavBgColor, type WorkspaceSettings } from '../utils/logoUpload';
+
+const DEFAULT_SETTINGS: WorkspaceSettings = { navLogoUrl: null, boardLogoUrl: null, navBgColor: '#1a1a2e' };
 
 export function Dashboard() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const { isMobile, isTablet } = useBreakpoint();
   const [kanbans, setKanbans] = useState<Kanban[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [accessKanban, setAccessKanban] = useState<Kanban | null>(null);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [settings, setSettings] = useState<WorkspaceSettings>(DEFAULT_SETTINGS);
+  const [uploading, setUploading] = useState<'nav' | 'board' | null>(null);
+  const navFileRef = useRef<HTMLInputElement>(null);
+  const boardFileRef = useRef<HTMLInputElement>(null);
+
+  // Folder UI state
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [renamingFolder, setRenamingFolder] = useState<Folder | null>(null);
+  const [renamingFolderName, setRenamingFolderName] = useState('');
+  const [folderBusy, setFolderBusy] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    getWorkspaceSettings(user.uid).then(setSettings);
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
     setLoading(true);
-    let unsub: (() => void) | undefined;
-    let cancelled = false;
-
-    // Ensure new users get a default board, then open a live subscription.
-    ensureDefaultKanban(user.uid, user.email ?? undefined).catch(() => {}).finally(() => {
-      if (cancelled) return;
-      unsub = subscribeUserKanbans(user.uid, kanbans => {
-        setKanbans(kanbans);
-        setLoading(false);
-      });
+    const unsub = subscribeUserKanbans(user.uid, kanbans => {
+      setKanbans(kanbans);
+      setLoading(false);
     });
+    return unsub;
+  }, [user]);
 
-    return () => {
-      cancelled = true;
-      unsub?.();
-    };
+  useEffect(() => {
+    if (!user) return;
+    const unsub = subscribeUserFolders(user.uid, setFolders);
+    return unsub;
   }, [user]);
 
   function onCreated(kanban: Kanban) {
@@ -45,33 +74,206 @@ export function Dashboard() {
     navigate(`/k/${kanban.id}`);
   }
 
+  async function handleUpload(slot: 'nav' | 'board', e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    setUploading(slot);
+    try {
+      const url = await uploadLogo(user.uid, slot, file);
+      setSettings(s => ({ ...s, [`${slot}LogoUrl`]: url }));
+      message.success('Logo uploaded');
+    } catch {
+      message.error('Upload failed — check Firebase Storage rules are deployed');
+    } finally {
+      setUploading(null);
+      e.target.value = '';
+    }
+  }
+
+  async function handleDelete(slot: 'nav' | 'board') {
+    if (!user) return;
+    setUploading(slot);
+    try {
+      await deleteLogo(user.uid, slot);
+      setSettings(s => ({ ...s, [`${slot}LogoUrl`]: null }));
+      message.success('Logo removed');
+    } finally {
+      setUploading(null);
+    }
+  }
+
+  async function handleColorChange(color: string) {
+    setSettings(s => ({ ...s, navBgColor: color }));
+    if (user) await saveNavBgColor(user.uid, color);
+  }
+
+  // ── Folder handlers ──────────────────────────────────────────────────────────
+
+  async function handleCreateFolder() {
+    if (!user || !newFolderName.trim()) return;
+    setFolderBusy(true);
+    try {
+      await createFolder(user.uid, newFolderName.trim(), user.email ?? undefined);
+      setNewFolderOpen(false);
+      setNewFolderName('');
+    } catch {
+      message.error('Failed to create folder');
+    } finally {
+      setFolderBusy(false);
+    }
+  }
+
+  async function handleDeleteFolder(folder: Folder) {
+    try {
+      await deleteFolder(folder);
+    } catch {
+      message.error('Failed to delete folder');
+    }
+  }
+
+  async function handleRenameFolder() {
+    if (!renamingFolder || !renamingFolderName.trim()) return;
+    setFolderBusy(true);
+    try {
+      await renameFolder(renamingFolder, renamingFolderName.trim());
+      setRenamingFolder(null);
+      setRenamingFolderName('');
+    } catch {
+      message.error('Failed to rename folder');
+    } finally {
+      setFolderBusy(false);
+    }
+  }
+
+  async function handleAddToFolder(folder: Folder, kanbanId: string) {
+    // Remove from current folder first if it's in one
+    const currentFolder = folders.find(f => f.id !== folder.id && f.kanbanIds.includes(kanbanId));
+    if (currentFolder) {
+      await removeKanbanFromFolder(currentFolder, kanbanId).catch(() => {});
+    }
+    try {
+      await addKanbanToFolder(folder, kanbanId, kanbans);
+    } catch {
+      message.error('Failed to move kanban');
+    }
+  }
+
+  async function handleRemoveFromFolder(folder: Folder, kanbanId: string) {
+    try {
+      await removeKanbanFromFolder(folder, kanbanId);
+    } catch {
+      message.error('Failed to remove from folder');
+    }
+  }
+
+  function handleCopyFolderInvite(folder: Folder) {
+    const url = `${window.location.origin}/simple-kanban/folder-invite/${folder.inviteToken}`;
+    navigator.clipboard.writeText(url);
+    message.success('Folder invite link copied');
+  }
+
+  function toggleCollapse(folderId: string) {
+    setCollapsedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  }
+
+  // ── Derived state ────────────────────────────────────────────────────────────
+
+  const ownedKanbans = kanbans.filter(k => user && k.ownerId === user.uid);
+  const ownedFolders = folders.filter(f => f.ownerId === user?.uid);
+  const allFolderKanbanIds = new Set(folders.flatMap(f => f.kanbanIds));
+  const ungroupedKanbans = kanbans.filter(k => !allFolderKanbanIds.has(k.id));
+  const hasFolders = folders.length > 0;
+
+  const navBg = settings.navBgColor || '#1a1a2e';
+  const navTextColor = (r: number, g: number, b: number) => (r * 299 + g * 587 + b * 114) / 1000 > 128 ? '#1a1a2e' : '#ffffff';
+  function hexToRgb(hex: string) {
+    return {
+      r: parseInt(hex.slice(1, 3), 16),
+      g: parseInt(hex.slice(3, 5), 16),
+      b: parseInt(hex.slice(5, 7), 16),
+    };
+  }
+  const rgb = hexToRgb(navBg.startsWith('#') && navBg.length === 7 ? navBg : '#1a1a2e');
+  const textColor = navTextColor(rgb.r, rgb.g, rgb.b);
+  const subtleTextColor = textColor === '#ffffff' ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)';
+  const iconColor = textColor === '#ffffff' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)';
+
+  const gridStyle = {
+    display: 'grid',
+    gridTemplateColumns: isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(auto-fill, minmax(260px, 1fr))',
+    gap: 16,
+  } as React.CSSProperties;
+
+  function LogoSlot({ slot, label, hint }: { slot: 'nav' | 'board'; label: string; hint: string }) {
+    const url = slot === 'nav' ? settings.navLogoUrl : settings.boardLogoUrl;
+    const fileRef = slot === 'nav' ? navFileRef : boardFileRef;
+    const busy = uploading === slot;
+    return (
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, color: '#555', marginBottom: 3 }}>{label}</div>
+        <div style={{ fontSize: 11, color: '#aaa', marginBottom: 10 }}>{hint}</div>
+        {url && (
+          <div style={{
+            marginBottom: 10, padding: 10,
+            background: slot === 'nav' ? navBg : '#EEF0F5',
+            borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <img src={url} alt="logo preview" style={{ height: 36, width: 'auto', objectFit: 'contain' }} />
+            <Button size="small" danger icon={<DeleteOutlined />} loading={busy} onClick={() => handleDelete(slot)}>
+              Remove
+            </Button>
+          </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".png,.jpg,.jpeg,.svg,.webp"
+          onChange={e => handleUpload(slot, e)}
+          style={{ display: 'none' }}
+        />
+        <Button icon={<UploadOutlined />} loading={busy} onClick={() => fileRef.current?.click()} block>
+          {url ? 'Replace' : 'Upload'} logo
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: '#EEF0F5', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
       <div style={{
-        background: '#1a1a2e',
+        background: navBg,
         padding: '0 24px',
         height: 56,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         flexShrink: 0,
+        transition: 'background 0.2s',
       }}>
-        <span style={{ color: '#fff', fontWeight: 800, fontSize: 18, letterSpacing: '-0.3px' }}>
-          Simple Kanban <span style={{ fontWeight: 400, color: 'rgba(255,255,255,0.55)', fontSize: 15 }}>by Oestler</span>
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {settings.navLogoUrl
+            ? <img src={settings.navLogoUrl} alt="logo" style={{ height: 34, width: 'auto', objectFit: 'contain' }} />
+            : <span style={{ color: textColor, fontWeight: 800, fontSize: 18, letterSpacing: '-0.3px' }}>
+                Simple Kanban <span style={{ fontWeight: 400, color: subtleTextColor, fontSize: 15 }}>by Oestler</span>
+              </span>
+          }
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {!isMobile && (
-            <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>{user?.email}</span>
-          )}
+          {!isMobile && <span style={{ color: subtleTextColor, fontSize: 13 }}>{user?.email}</span>}
           {user?.email && <UserAvatar email={user.email} size={28} />}
-          <Button
-            icon={<LogoutOutlined />}
-            size="small"
-            type="text"
-            onClick={signOut}
-            style={{ color: 'rgba(255,255,255,0.5)' }}
-          />
+          <Tooltip title="Workspace settings">
+            <Button icon={<SettingOutlined />} size="small" type="text"
+              onClick={() => { setWorkspaceOpen(true); if (user) getWorkspaceSettings(user.uid).then(setSettings); }}
+              style={{ color: iconColor }}
+            />
+          </Tooltip>
+          <Button icon={<LogoutOutlined />} size="small" type="text" onClick={signOut} style={{ color: iconColor }} />
         </div>
       </div>
 
@@ -79,43 +281,201 @@ export function Dashboard() {
       <div style={{ flex: 1, padding: '32px 24px', maxWidth: 1100, width: '100%', margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: '#1a1a2e', margin: 0 }}>Your Kanbans</h1>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setCreateOpen(true)}
-          >
-            New Kanban
-          </Button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Tooltip title="New folder">
+              <Button icon={<FolderAddOutlined />} onClick={() => { setNewFolderName(''); setNewFolderOpen(true); }}>
+                {!isMobile && 'New Folder'}
+              </Button>
+            </Tooltip>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              {!isMobile && 'New Kanban'}
+            </Button>
+          </div>
         </div>
 
         {loading ? (
-          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 80 }}>
-            <Spin size="large" />
-          </div>
+          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 80 }}><Spin size="large" /></div>
         ) : (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : isTablet ? 'repeat(2, 1fr)' : 'repeat(auto-fill, minmax(260px, 1fr))',
-            gap: 16,
-          }}>
-            {kanbans.map(k => (
-              <KanbanCard
-                key={k.id}
-                kanban={k}
-                isOwner={isKanbanOwner(k, user!.uid)}
-                onClick={() => navigate(`/k/${k.id}`)}
-                onManageAccess={() => setAccessKanban(k)}
-              />
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+            {/* Folders */}
+            {folders.map(folder => {
+              const folderKanbans = kanbans.filter(k => folder.kanbanIds.includes(k.id));
+              const isOwner = folder.ownerId === user!.uid;
+              const isCollapsed = collapsedFolders.has(folder.id);
+
+              return (
+                <div key={folder.id}>
+                  {/* Folder header */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    marginBottom: isCollapsed ? 0 : 12,
+                    padding: '10px 14px',
+                    background: '#E2E4EC',
+                    borderRadius: isCollapsed ? 10 : '10px 10px 0 0',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                    onClick={() => toggleCollapse(folder.id)}
+                  >
+                    <span style={{ color: '#666', fontSize: 12, transition: 'transform 0.15s', display: 'inline-flex' }}>
+                      {isCollapsed ? <RightOutlined /> : <DownOutlined />}
+                    </span>
+                    {isCollapsed
+                      ? <FolderOutlined style={{ color: '#555', fontSize: 16 }} />
+                      : <FolderOpenOutlined style={{ color: '#555', fontSize: 16 }} />
+                    }
+                    <span style={{ fontWeight: 700, fontSize: 15, color: '#1a1a2e', flex: 1 }}>
+                      {folder.name}
+                    </span>
+                    <span style={{ fontSize: 12, color: '#999', marginRight: 4 }}>
+                      {folderKanbans.length} kanban{folderKanbans.length !== 1 ? 's' : ''}
+                    </span>
+                    {!isOwner && <Tag color="blue" style={{ marginRight: 4 }}>Shared</Tag>}
+
+                    {/* Share button — owner only */}
+                    {isOwner && (
+                      <Tooltip title="Copy invite link">
+                        <button
+                          onClick={e => { e.stopPropagation(); handleCopyFolderInvite(folder); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px', color: '#999', borderRadius: 4, lineHeight: 1, fontSize: 14 }}
+                          onMouseEnter={e => (e.currentTarget.style.color = '#555')}
+                          onMouseLeave={e => (e.currentTarget.style.color = '#999')}
+                        >
+                          <ShareAltOutlined />
+                        </button>
+                      </Tooltip>
+                    )}
+
+                    {/* More options — owner only */}
+                    {isOwner && (
+                      <Dropdown
+                        trigger={['click']}
+                        menu={{
+                          items: [
+                            {
+                              key: 'rename',
+                              icon: <EditOutlined />,
+                              label: 'Rename folder',
+                            },
+                            { type: 'divider' },
+                            {
+                              key: 'delete',
+                              icon: <DeleteOutlined />,
+                              label: 'Delete folder',
+                              danger: true,
+                            },
+                          ],
+                          onClick: ({ key, domEvent }) => {
+                            domEvent.stopPropagation();
+                            if (key === 'rename') {
+                              setRenamingFolder(folder);
+                              setRenamingFolderName(folder.name);
+                            }
+                            if (key === 'delete') handleDeleteFolder(folder);
+                          },
+                        }}
+                      >
+                        <button
+                          onClick={e => e.stopPropagation()}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px', color: '#999', borderRadius: 4, lineHeight: 1, fontSize: 14 }}
+                          onMouseEnter={e => (e.currentTarget.style.color = '#555')}
+                          onMouseLeave={e => (e.currentTarget.style.color = '#999')}
+                        >
+                          <MoreOutlined />
+                        </button>
+                      </Dropdown>
+                    )}
+                  </div>
+
+                  {/* Folder contents */}
+                  {!isCollapsed && (
+                    <div style={{
+                      background: '#E8EAF0',
+                      borderRadius: '0 0 10px 10px',
+                      padding: folderKanbans.length > 0 ? '16px 14px' : '12px 14px',
+                    }}>
+                      {folderKanbans.length > 0 ? (
+                        <div style={gridStyle}>
+                          {folderKanbans.map(k => (
+                            <KanbanCard
+                              key={k.id}
+                              kanban={k}
+                              isOwner={isKanbanOwner(k, user!.uid)}
+                              onClick={() => navigate(`/k/${k.id}`)}
+                              onManageAccess={() => setAccessKanban(k)}
+                              ownedFolders={ownedFolders}
+                              currentFolder={folder}
+                              onAddToFolder={targetFolderId => {
+                                const target = folders.find(f => f.id === targetFolderId);
+                                if (target) handleAddToFolder(target, k.id);
+                              }}
+                              onRemoveFromFolder={() => handleRemoveFromFolder(folder, k.id)}
+                              onCreateFolder={() => { setNewFolderName(''); setNewFolderOpen(true); }}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 13, color: '#aaa', fontStyle: 'italic' }}>
+                          No kanbans in this folder yet. Move kanbans here using the folder button on each card.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Ungrouped kanbans */}
+            {ungroupedKanbans.length > 0 && (
+              <div>
+                {hasFolders && (
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#999', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    Ungrouped
+                  </div>
+                )}
+                <div style={gridStyle}>
+                  {ungroupedKanbans.map(k => (
+                    <KanbanCard
+                      key={k.id}
+                      kanban={k}
+                      isOwner={isKanbanOwner(k, user!.uid)}
+                      onClick={() => navigate(`/k/${k.id}`)}
+                      onManageAccess={() => setAccessKanban(k)}
+                      ownedFolders={ownedFolders}
+                      currentFolder={undefined}
+                      onAddToFolder={targetFolderId => {
+                        const target = folders.find(f => f.id === targetFolderId);
+                        if (target) handleAddToFolder(target, k.id);
+                      }}
+                      onRemoveFromFolder={() => {}}
+                      onCreateFolder={() => { setNewFolderName(''); setNewFolderOpen(true); }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Empty state */}
+            {kanbans.length === 0 && !loading && (
+              <div style={{ textAlign: 'center', paddingTop: 80 }}>
+                <div style={{ fontSize: 40, marginBottom: 16 }}>📋</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#1a1a2e', marginBottom: 8 }}>
+                  Create your first kanban
+                </div>
+                <div style={{ fontSize: 14, color: '#999', marginBottom: 28, maxWidth: 320, margin: '0 auto 28px' }}>
+                  Kanbans help you track work across columns. Give one a name and get moving.
+                </div>
+                <Button type="primary" icon={<PlusOutlined />} size="large" onClick={() => setCreateOpen(true)}>
+                  New Kanban
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      <CreateKanbanModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onCreated={onCreated}
-      />
+      <CreateKanbanModal open={createOpen} onClose={() => setCreateOpen(false)} onCreated={onCreated} />
 
       {accessKanban && (
         <AccessModal
@@ -129,9 +489,112 @@ export function Dashboard() {
           }}
         />
       )}
+
+      {/* Create folder modal */}
+      <Modal
+        title="New Folder"
+        open={newFolderOpen}
+        onOk={handleCreateFolder}
+        onCancel={() => setNewFolderOpen(false)}
+        okText="Create"
+        okButtonProps={{ disabled: !newFolderName.trim(), loading: folderBusy }}
+        destroyOnClose
+      >
+        <Input
+          placeholder="Folder name"
+          value={newFolderName}
+          onChange={e => setNewFolderName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleCreateFolder()}
+          autoFocus
+          style={{ marginTop: 8 }}
+        />
+      </Modal>
+
+      {/* Rename folder modal */}
+      <Modal
+        title="Rename Folder"
+        open={!!renamingFolder}
+        onOk={handleRenameFolder}
+        onCancel={() => setRenamingFolder(null)}
+        okText="Save"
+        okButtonProps={{ disabled: !renamingFolderName.trim(), loading: folderBusy }}
+        destroyOnClose
+      >
+        <Input
+          placeholder="Folder name"
+          value={renamingFolderName}
+          onChange={e => setRenamingFolderName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleRenameFolder()}
+          autoFocus
+          style={{ marginTop: 8 }}
+        />
+      </Modal>
+
+      {/* Workspace drawer */}
+      <Drawer
+        title="Workspace"
+        open={workspaceOpen}
+        onClose={() => setWorkspaceOpen(false)}
+        width={isMobile ? '100vw' : 380}
+      >
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, color: '#555', marginBottom: 3 }}>Gallery navigation colour</div>
+          <div style={{ fontSize: 11, color: '#aaa', marginBottom: 10 }}>Background colour of the top bar on the gallery page.</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ position: 'relative' }}>
+              <div
+                style={{ width: 36, height: 36, borderRadius: 8, cursor: 'pointer', background: navBg, border: '2px solid rgba(0,0,0,0.12)' }}
+                onClick={() => document.getElementById('nav-color-input')?.click()}
+              />
+              <input
+                id="nav-color-input"
+                type="color"
+                value={navBg}
+                onChange={e => handleColorChange(e.target.value)}
+                style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }}
+              />
+            </div>
+            <div style={{ fontSize: 12, color: '#888', fontFamily: 'monospace' }}>{navBg.toUpperCase()}</div>
+            <Button size="small" type="text" style={{ color: '#aaa', fontSize: 11 }} onClick={() => handleColorChange('#1a1a2e')}>Reset</Button>
+          </div>
+        </div>
+
+        <LogoSlot
+          slot="nav"
+          label="Gallery navigation logo"
+          hint="Replaces the 'Simple Kanban' text. Use a negative (light) version for dark nav backgrounds."
+        />
+        <LogoSlot
+          slot="board"
+          label="Kanban board logo"
+          hint="Shown in the top-left of each board when enabled per-board in Settings. Use a positive (dark/coloured) version for the light grey background."
+        />
+
+        <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, color: '#555', marginBottom: 4 }}>Export</div>
+          <Button
+            icon={<DownloadOutlined />}
+            block
+            disabled={ownedKanbans.length === 0}
+            onClick={() => exportAllKanbansCSV(ownedKanbans)}
+          >
+            Export all kanbans (CSV)
+          </Button>
+          <Button
+            icon={<FileTextOutlined />}
+            block
+            disabled={ownedKanbans.length === 0}
+            onClick={() => window.open('/simple-kanban/workspace-report', '_blank')}
+          >
+            Workspace report (PDF)
+          </Button>
+        </div>
+      </Drawer>
     </div>
   );
 }
+
+// ── Sub-components ─────────────────────────────────────────────────────────────
 
 function MiniProgressBar({ kanban }: { kanban: Kanban }) {
   const total = kanban.cards.length;
@@ -146,18 +609,42 @@ function MiniProgressBar({ kanban }: { kanban: Kanban }) {
   );
 }
 
-function KanbanCard({ kanban, isOwner, onClick, onManageAccess }: { kanban: Kanban; isOwner: boolean; onClick: () => void; onManageAccess: () => void }) {
+interface KanbanCardProps {
+  kanban: Kanban;
+  isOwner: boolean;
+  onClick: () => void;
+  onManageAccess: () => void;
+  ownedFolders: Folder[];
+  currentFolder?: Folder;
+  onAddToFolder: (folderId: string) => void;
+  onRemoveFromFolder: () => void;
+  onCreateFolder: () => void;
+}
+
+function KanbanCard({
+  kanban, isOwner, onClick, onManageAccess,
+  ownedFolders, currentFolder, onAddToFolder, onRemoveFromFolder, onCreateFolder,
+}: KanbanCardProps) {
   const accentColor = kanban.columns[0]?.color ?? '#1a1a2e';
+
+  const folderMenuItems = [
+    ...(currentFolder ? [
+      { key: '__remove', label: `Remove from "${currentFolder.name}"`, danger: true },
+      { type: 'divider' as const },
+    ] : []),
+    ...ownedFolders
+      .filter(f => f.id !== currentFolder?.id)
+      .map(f => ({ key: f.id, label: `Move to "${f.name}"` })),
+    ...(ownedFolders.length > 0 ? [{ type: 'divider' as const }] : []),
+    { key: '__new', label: 'New folder...' },
+  ];
+
   return (
     <div
       onClick={onClick}
       style={{
-        background: '#fff',
-        borderRadius: 12,
-        overflow: 'hidden',
-        cursor: 'pointer',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-        transition: 'box-shadow 0.15s, transform 0.15s',
+        background: '#fff', borderRadius: 12, overflow: 'hidden', cursor: 'pointer',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.07)', transition: 'box-shadow 0.15s, transform 0.15s',
       }}
       onMouseEnter={e => {
         (e.currentTarget as HTMLDivElement).style.boxShadow = '0 4px 16px rgba(0,0,0,0.13)';
@@ -172,15 +659,43 @@ function KanbanCard({ kanban, isOwner, onClick, onManageAccess }: { kanban: Kanb
       <div style={{ padding: '16px 18px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 14 }}>
           <span style={{ fontWeight: 700, fontSize: 15, color: '#1a1a2e', lineHeight: 1.3 }}>{kanban.name}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             {!isOwner && <Tag color="blue">Shared</Tag>}
+            {/* Folder button */}
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: folderMenuItems,
+                onClick: ({ key, domEvent }) => {
+                  domEvent.stopPropagation();
+                  if (key === '__remove') onRemoveFromFolder();
+                  else if (key === '__new') onCreateFolder();
+                  else onAddToFolder(key);
+                },
+              }}
+            >
+              <Tooltip title={currentFolder ? `In "${currentFolder.name}"` : 'Move to folder'}>
+                <button
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    padding: '2px 4px', borderRadius: 4, lineHeight: 1, fontSize: 14,
+                    color: currentFolder ? '#1677ff' : '#bbb',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.color = currentFolder ? '#0958d9' : '#888')}
+                  onMouseLeave={e => (e.currentTarget.style.color = currentFolder ? '#1677ff' : '#bbb')}
+                >
+                  <FolderOutlined />
+                </button>
+              </Tooltip>
+            </Dropdown>
             {isOwner && (
               <Tooltip title="Manage access">
                 <button
                   onClick={e => { e.stopPropagation(); onManageAccess(); }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#999', borderRadius: 4, lineHeight: 1, fontSize: 14 }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#bbb', borderRadius: 4, lineHeight: 1, fontSize: 14 }}
                   onMouseEnter={e => (e.currentTarget.style.color = '#555')}
-                  onMouseLeave={e => (e.currentTarget.style.color = '#999')}
+                  onMouseLeave={e => (e.currentTarget.style.color = '#bbb')}
                 >
                   <TeamOutlined />
                 </button>
@@ -189,9 +704,7 @@ function KanbanCard({ kanban, isOwner, onClick, onManageAccess }: { kanban: Kanb
           </div>
         </div>
         {!isOwner && kanban.ownerEmail && (
-          <div style={{ fontSize: 11, color: '#aaa', marginBottom: 10 }}>
-            Shared by {kanban.ownerEmail}
-          </div>
+          <div style={{ fontSize: 11, color: '#aaa', marginBottom: 10 }}>Shared by {kanban.ownerEmail}</div>
         )}
         <MiniProgressBar kanban={kanban} />
         <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>

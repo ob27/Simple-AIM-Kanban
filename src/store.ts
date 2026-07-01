@@ -3,7 +3,7 @@ import {
   query, where, getDocs, arrayUnion, updateDoc, onSnapshot,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import type { Kanban } from './types';
+import type { Kanban, Folder } from './types';
 import {
   buildDefaultColumns,
   DEFAULT_TOTAL_ESTIMATED,
@@ -65,12 +65,13 @@ export async function loadUserKanbans(uid: string): Promise<Kanban[]> {
     getDocs(query(col, where('ownerId', '==', uid))),
     getDocs(query(col, where('memberIds', 'array-contains', uid))),
     getDocs(query(col, where('coOwnerIds', 'array-contains', uid))),
-    getDocs(query(col, where('viewerIds', 'array-contains', uid))),
+    getDocs(query(col, where('viewerIds', 'array-contains', uid))).catch(() => null),
   ]);
   const map = new Map<string, Kanban>();
-  [...ownerSnap.docs, ...memberSnap.docs, ...coOwnerSnap.docs, ...viewerSnap.docs].forEach(d => {
+  const snaps = [ownerSnap, memberSnap, coOwnerSnap, viewerSnap].filter(Boolean);
+  snaps.forEach(snap => snap!.docs.forEach(d => {
     map.set(d.id, { id: d.id, ...d.data() } as Kanban);
-  });
+  }));
   return Array.from(map.values()).sort((a, b) => a.createdAt - b.createdAt);
 }
 
@@ -208,4 +209,139 @@ export async function ensureDefaultKanban(uid: string, email?: string): Promise<
   if (owned.length === 0) {
     await createKanban(uid, 'AIM Kanban', email);
   }
+}
+
+// ── Folders ───────────────────────────────────────────────────────────────────
+
+export async function createFolder(uid: string, name: string, email?: string): Promise<Folder> {
+  const id = crypto.randomUUID();
+  const inviteToken = crypto.randomUUID();
+  const folder: Folder = {
+    id, name, ownerId: uid, ownerEmail: email ?? '',
+    memberIds: [], memberEmails: {}, kanbanIds: [],
+    inviteToken, createdAt: Date.now(),
+  };
+  await Promise.all([
+    setDoc(doc(db, 'folders', id), folder),
+    setDoc(doc(db, 'folderInvites', inviteToken), {
+      folderId: id, folderName: name, ownerEmail: email ?? '', kanbanIds: [],
+    }),
+  ]);
+  return folder;
+}
+
+export async function deleteFolder(folder: Folder): Promise<void> {
+  await Promise.all([
+    deleteDoc(doc(db, 'folders', folder.id)),
+    deleteDoc(doc(db, 'folderInvites', folder.inviteToken)),
+  ]);
+}
+
+export async function renameFolder(folder: Folder, name: string): Promise<void> {
+  await Promise.all([
+    updateDoc(doc(db, 'folders', folder.id), { name }),
+    updateDoc(doc(db, 'folderInvites', folder.inviteToken), { folderName: name }),
+  ]);
+}
+
+export async function addKanbanToFolder(
+  folder: Folder,
+  kanbanId: string,
+  allKanbans: Kanban[],
+): Promise<void> {
+  const newIds = [...new Set([...folder.kanbanIds, kanbanId])];
+  await Promise.all([
+    updateDoc(doc(db, 'folders', folder.id), { kanbanIds: newIds }),
+    updateDoc(doc(db, 'folderInvites', folder.inviteToken), { kanbanIds: newIds }),
+  ]);
+  // Propagate access: if folder owner owns this kanban and there are members, add them
+  if (folder.memberIds.length > 0) {
+    const kanban = allKanbans.find(k => k.id === kanbanId);
+    if (kanban && kanban.ownerId === folder.ownerId) {
+      await Promise.all(folder.memberIds.map(memberId => {
+        const memberEmail = folder.memberEmails?.[memberId];
+        const update: Record<string, unknown> = { memberIds: arrayUnion(memberId) };
+        if (memberEmail) update[`memberEmails.${memberId}`] = memberEmail;
+        return updateDoc(doc(db, 'kanbans', kanbanId), update).catch(() => {});
+      }));
+    }
+  }
+}
+
+export async function removeKanbanFromFolder(folder: Folder, kanbanId: string): Promise<void> {
+  const newIds = folder.kanbanIds.filter(id => id !== kanbanId);
+  await Promise.all([
+    updateDoc(doc(db, 'folders', folder.id), { kanbanIds: newIds }),
+    updateDoc(doc(db, 'folderInvites', folder.inviteToken), { kanbanIds: newIds }),
+  ]);
+}
+
+export function subscribeUserFolders(
+  uid: string,
+  onChange: (folders: Folder[]) => void,
+): () => void {
+  const col = collection(db, 'folders');
+  const slices: Record<string, Map<string, Folder>> = {
+    owner: new Map(), member: new Map(),
+  };
+
+  function rebuild() {
+    const merged = new Map<string, Folder>();
+    for (const slice of Object.values(slices)) {
+      for (const [id, f] of slice) merged.set(id, f);
+    }
+    onChange(Array.from(merged.values()).sort((a, b) => a.createdAt - b.createdAt));
+  }
+
+  const makeUnsub = (sliceKey: string, q: ReturnType<typeof query>) =>
+    onSnapshot(q, snap => {
+      const slice = slices[sliceKey];
+      slice.clear();
+      snap.forEach(d => slice.set(d.id, { id: d.id, ...(d.data() as object) } as Folder));
+      rebuild();
+    }, () => {});
+
+  const unsubs = [
+    makeUnsub('owner',  query(col, where('ownerId',   '==',            uid))),
+    makeUnsub('member', query(col, where('memberIds', 'array-contains', uid))),
+  ];
+  return () => unsubs.forEach(u => u());
+}
+
+// ── Folder invites ────────────────────────────────────────────────────────────
+
+export interface FolderInviteInfo {
+  folderId: string;
+  folderName: string;
+  ownerEmail: string;
+  kanbanIds: string[];
+}
+
+export async function resolveFolderInvite(token: string): Promise<FolderInviteInfo | null> {
+  const snap = await getDoc(doc(db, 'folderInvites', token));
+  if (!snap.exists()) return null;
+  const d = snap.data();
+  return {
+    folderId: d.folderId as string,
+    folderName: d.folderName as string,
+    ownerEmail: d.ownerEmail as string,
+    kanbanIds: (d.kanbanIds as string[]) ?? [],
+  };
+}
+
+export async function joinFolder(
+  folderId: string,
+  uid: string,
+  email?: string,
+  kanbanIds: string[] = [],
+): Promise<void> {
+  const folderUpdate: Record<string, unknown> = { memberIds: arrayUnion(uid) };
+  if (email) folderUpdate[`memberEmails.${uid}`] = email;
+  await updateDoc(doc(db, 'folders', folderId), folderUpdate);
+  // Self-add to each kanban in the folder
+  await Promise.all(kanbanIds.map(kanbanId => {
+    const kanbanUpdate: Record<string, unknown> = { memberIds: arrayUnion(uid) };
+    if (email) kanbanUpdate[`memberEmails.${uid}`] = email;
+    return updateDoc(doc(db, 'kanbans', kanbanId), kanbanUpdate).catch(() => {});
+  }));
 }
